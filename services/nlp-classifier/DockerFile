@@ -6,12 +6,10 @@ COPY requirements.base.txt .
 RUN pip install --no-cache-dir -r requirements.base.txt
 
 FROM base
-RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr \
-    && rm -rf /var/lib/apt/lists/*
-COPY services/doc-cv/requirements.txt .
+COPY services/nlp-classifier/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY services/doc-cv/ .
-RUN python train.py
+COPY services/nlp-classifier/ .
+RUN python train.py && chown -R appuser:appuser /app
 
 USER appuser
 EXPOSE 8000

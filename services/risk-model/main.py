@@ -14,7 +14,7 @@ log = get_logger("risk-model")
 app = FastAPI(title="risk-model")
 
 model = RiskNet()
-model.load_state_dict(torch.load("risk_model.pt", map_location="cpu"))
+model.load_state_dict(torch.load("risk_model.pt", map_location="cpu", weights_only=True))
 model.eval()
 
 with open("norm_stats.json") as f:
