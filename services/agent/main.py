@@ -2,13 +2,13 @@
 Auth/schema/logging reused from lib/, same pattern as all prior services.
 This is the only service that talks to an LLM - everything below it
 (risk-model, doc-cv, nlp-classifier, rag) is a plain, secure HTTP tool."""
+from gemini_client import run_agent
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel, Field
 
 from lib.auth import verify_key
 from lib.schemas import ServiceResponse
 from lib.logging import get_logger
-from bedrock_client import run_agent
 
 log = get_logger("agent")
 app = FastAPI(title="agent")

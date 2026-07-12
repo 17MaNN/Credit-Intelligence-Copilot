@@ -1,6 +1,6 @@
-"""Tool schemas (Bedrock Converse API format) + executor functions that call
-the four existing services over HTTP. Each tool maps 1:1 to a service endpoint
-already built in Phases 1-4 - no new business logic here, just plumbing."""
+"""Tool schemas + executor functions that call the four existing services
+over HTTP. Each tool maps 1:1 to a service endpoint already built in
+Phases 1-4 - no new business logic here, just plumbing."""
 import os
 import base64
 import httpx
@@ -14,63 +14,56 @@ RAG_URL = os.environ.get("RAG_URL", "http://rag:8000")
 HEADERS = {"x-api-key": SERVICE_API_KEY}
 TIMEOUT = 15.0
 
+# Gemini function-declaration format: plain JSON schema per function.
 TOOLS = [
     {
-        "toolSpec": {
-            "name": "get_credit_risk",
-            "description": "Score a customer's default risk from financial details.",
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {
-                    "income": {"type": "number"},
-                    "debt_to_income": {"type": "number", "description": "0 to 1"},
-                    "credit_history_years": {"type": "number"},
-                    "num_delinquencies": {"type": "integer"},
-                    "loan_amount": {"type": "number"},
-                },
-                "required": ["income", "debt_to_income", "credit_history_years",
-                              "num_delinquencies", "loan_amount"],
-            }},
-        }
+        "name": "get_credit_risk",
+        "description": "Score a customer's default risk from financial details.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "income": {"type": "number"},
+                "debt_to_income": {"type": "number", "description": "0 to 1"},
+                "credit_history_years": {"type": "number"},
+                "num_delinquencies": {"type": "integer"},
+                "loan_amount": {"type": "number"},
+            },
+            "required": ["income", "debt_to_income", "credit_history_years",
+                          "num_delinquencies", "loan_amount"],
+        },
     },
     {
-        "toolSpec": {
-            "name": "classify_intent",
-            "description": "Classify a customer message into an intent: "
-                            "promise_to_pay, dispute, hardship, or other.",
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {"text": {"type": "string"}},
-                "required": ["text"],
-            }},
-        }
+        "name": "classify_intent",
+        "description": "Classify a customer message into an intent: "
+                        "promise_to_pay, dispute, hardship, or other.",
+        "parameters": {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
     },
     {
-        "toolSpec": {
-            "name": "retrieve_policy",
-            "description": "Retrieve relevant internal policy text for a topic "
-                            "(e.g. hardship plans, disputes, contact rules).",
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "top_k": {"type": "integer", "default": 3},
-                },
-                "required": ["query"],
-            }},
-        }
+        "name": "retrieve_policy",
+        "description": "Retrieve relevant internal policy text for a topic "
+                        "(e.g. hardship plans, disputes, contact rules).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "top_k": {"type": "integer"},
+            },
+            "required": ["query"],
+        },
     },
     {
-        "toolSpec": {
-            "name": "analyze_document",
-            "description": "Classify a document type and OCR its text from a "
-                            "base64-encoded image.",
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {"image_base64": {"type": "string"}},
-                "required": ["image_base64"],
-            }},
-        }
+        "name": "analyze_document",
+        "description": "Classify a document type and OCR its text from a "
+                        "base64-encoded image.",
+        "parameters": {
+            "type": "object",
+            "properties": {"image_base64": {"type": "string"}},
+            "required": ["image_base64"],
+        },
     },
 ]
 
