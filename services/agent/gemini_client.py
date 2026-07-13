@@ -4,13 +4,17 @@ spinning up FastAPI. Uses Gemini's free tier - no billing/credit card
 required. Note: this uses `google-genai`, the current supported SDK -
 not the deprecated `google-generativeai` package."""
 import os
+import time
 from google import genai
 from google.genai import types
+from google.genai import errors as genai_errors
 from tools import TOOLS, EXECUTORS
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_TOOL_ROUNDS = 6
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 2
 
 SYSTEM_PROMPT = (
     "You are a lending/collections operations assistant. Use the available "
@@ -25,6 +29,21 @@ def _client():
     return genai.Client(api_key=GEMINI_API_KEY)
 
 
+def _send_with_retry(chat, content):
+    """Retries transient 5xx errors from Gemini (e.g. temporary overload)
+    with short backoff. Client errors (4xx, bad input) are not retried -
+    they won't succeed on retry and should surface immediately."""
+    last_error = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            return chat.send_message(content)
+        except genai_errors.ServerError as e:
+            last_error = e
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
+    raise last_error
+
+
 def run_agent(user_message: str):
     """Runs the tool-calling loop. Returns (final_text, tool_call_log)."""
     client = _client()
@@ -36,7 +55,7 @@ def run_agent(user_message: str):
     chat = client.chats.create(model=MODEL_NAME, config=config)
     tool_call_log = []
 
-    response = chat.send_message(user_message)
+    response = _send_with_retry(chat, user_message)
 
     for _ in range(MAX_TOOL_ROUNDS):
         parts = response.candidates[0].content.parts
@@ -60,6 +79,6 @@ def run_agent(user_message: str):
                 types.Part.from_function_response(name=name, response={"result": result})
             )
 
-        response = chat.send_message(function_response_parts)
+        response = _send_with_retry(chat, function_response_parts)
 
     return "Reached max tool-call rounds without a final answer.", tool_call_log

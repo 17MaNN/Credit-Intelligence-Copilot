@@ -25,7 +25,11 @@ def health():
 
 @app.post("/handle-inquiry", response_model=ServiceResponse)
 def handle_inquiry(req: InquiryRequest, _=Depends(verify_key)):
-    final_text, tool_call_log = run_agent(req.message)
+    try:
+        final_text, tool_call_log = run_agent(req.message)
+    except Exception as e:
+        log.info(f"agent failed: {e}")
+        return ServiceResponse(ok=False, error=f"agent temporarily unavailable: {e}")
 
     log.info(f"handled inquiry, tool_calls={len(tool_call_log)}")
     return ServiceResponse(ok=True, data={
