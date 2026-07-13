@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: credit-copilot-config
+  namespace: credit-copilot
+data:
+  GEMINI_MODEL: "gemini-3.1-flash-lite"

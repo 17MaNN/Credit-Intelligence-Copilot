@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nlp-classifier
+  namespace: credit-copilot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nlp-classifier
+  template:
+    metadata:
+      labels:
+        app: nlp-classifier
+    spec:
+      containers:
+        - name: nlp-classifier
+          image: nlp-classifier:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: credit-copilot-secrets
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nlp-classifier
+  namespace: credit-copilot
+spec:
+  selector:
+    app: nlp-classifier
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP

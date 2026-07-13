@@ -11,7 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr \
 COPY services/doc-cv/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY services/doc-cv/ .
-RUN python train.py
+RUN python train.py && chown -R appuser:appuser /app
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python3 -c "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)" || exit 1
 
 USER appuser
 EXPOSE 8000
