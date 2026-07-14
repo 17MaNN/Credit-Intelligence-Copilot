@@ -1,0 +1,136 @@
+name: CI
+
+# Runs on every PR (build + eval gate) and on pushes to main (also pushes
+# images to GitHub Container Registry). No live Kubernetes deploy step here -
+# that needs a persistent cloud cluster + kubeconfig secret, which this repo
+# doesn't have set up. See infra/k8s/ for manual deploy instructions.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build:
+    name: Build all service images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [risk-model, doc-cv, nlp-classifier, rag, agent]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.service }}
+        run: docker build -f services/${{ matrix.service }}/Dockerfile -t ${{ matrix.service }}:ci .
+
+      - name: Save image as artifact
+        run: docker save ${{ matrix.service }}:ci -o /tmp/${{ matrix.service }}.tar
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.service }}
+          path: /tmp/${{ matrix.service }}.tar
+          retention-days: 1
+
+  eval:
+    name: Run eval harness against the full stack
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/images
+
+      - name: Load all images
+        run: |
+          for f in /tmp/images/*/*.tar; do docker load -i "$f"; done
+
+      - name: Start the stack
+        env:
+          SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY || 'ci-test-key' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.1-flash-lite
+        run: |
+          docker network create credit-net
+          docker run -d --network credit-net --name risk-model -e SERVICE_API_KEY=$SERVICE_API_KEY risk-model:ci
+          docker run -d --network credit-net --name doc-cv -e SERVICE_API_KEY=$SERVICE_API_KEY doc-cv:ci
+          docker run -d --network credit-net --name nlp-classifier -e SERVICE_API_KEY=$SERVICE_API_KEY nlp-classifier:ci
+          docker run -d --network credit-net --name rag -e SERVICE_API_KEY=$SERVICE_API_KEY rag:ci
+          docker run -d --network credit-net -p 8000:8000 --name agent \
+            -e SERVICE_API_KEY=$SERVICE_API_KEY -e GEMINI_API_KEY=$GEMINI_API_KEY -e GEMINI_MODEL=$GEMINI_MODEL \
+            agent:ci
+
+      - name: Wait for all services to be healthy
+        run: |
+          for svc in risk-model doc-cv nlp-classifier rag agent; do
+            for i in $(seq 1 30); do
+              status=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "starting")
+              if [ "$status" = "healthy" ]; then echo "$svc healthy"; break; fi
+              sleep 2
+            done
+          done
+
+      - name: Show container status (debug aid on failure)
+        if: always()
+        run: docker ps -a
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install eval deps
+        run: pip install -r eval/requirements.txt
+
+      - name: Run eval harness (fails the build if pass rate is too low)
+        env:
+          AGENT_URL: http://localhost:8000
+          SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY || 'ci-test-key' }}
+        run: python eval/run_eval.py
+
+      - name: Show agent logs (debug aid on failure)
+        if: failure()
+        run: docker logs agent --tail 100
+
+  push:
+    name: Push images to GHCR
+    needs: eval
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service: [risk-model, doc-cv, nlp-classifier, rag, agent]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service }}
+          path: /tmp/images
+
+      - name: Load image
+        run: docker load -i /tmp/images/${{ matrix.service }}.tar
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          docker tag ${{ matrix.service }}:ci $IMAGE:latest
+          docker tag ${{ matrix.service }}:ci $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}
