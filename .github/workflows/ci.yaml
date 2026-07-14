@@ -129,7 +129,8 @@ jobs:
 
       - name: Tag and push
         run: |
-          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          IMAGE_PREFIX_LOWER=$(echo "${{ env.IMAGE_PREFIX }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE=${{ env.REGISTRY }}/$IMAGE_PREFIX_LOWER/${{ matrix.service }}
           docker tag ${{ matrix.service }}:ci $IMAGE:latest
           docker tag ${{ matrix.service }}:ci $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
