@@ -1,0 +1,86 @@
+# Restricts pod-to-pod traffic within the credit-copilot namespace:
+#   - The 4 backend services (risk-model, doc-cv, nlp-classifier, rag) only
+#     accept traffic from the agent pod, on port 8000. Nothing else in (or
+#     outside) the cluster can reach them directly.
+#   - Those same 4 services can only make egress traffic to DNS (port 53) -
+#     they never call anything else, so no other egress is needed.
+#   - agent accepts ingress from anywhere (it's the external entrypoint via
+#     the LoadBalancer Service) and is allowed egress to DNS, the 4 backend
+#     services, and HTTPS out to the internet (required for the Gemini API).
+#
+# IMPORTANT CAVEAT: NetworkPolicy enforcement depends on the cluster's CNI
+# plugin supporting it. Docker Desktop's built-in Kubernetes does NOT ship
+# a policy-enforcing CNI by default, so applying these locally will succeed
+# with no errors but likely won't actually block anything. These are written
+# to the real Kubernetes NetworkPolicy spec and will be enforced correctly
+# on any cluster with a policy-aware CNI (Calico, Cilium, GKE, EKS with the
+# right add-on, etc). This has NOT been verified against a policy-enforcing
+# cluster - only checked for valid, well-formed YAML.
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-allow-from-agent-only
+  namespace: credit-copilot
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [risk-model, doc-cv, nlp-classifier, rag]
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: agent
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-network-policy
+  namespace: credit-copilot
+spec:
+  podSelector:
+    matchLabels:
+      app: agent
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - {}  # external entrypoint - accepts traffic from anywhere (via the LoadBalancer Service)
+  egress:
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app: risk-model
+        - podSelector:
+            matchLabels:
+              app: doc-cv
+        - podSelector:
+            matchLabels:
+              app: nlp-classifier
+        - podSelector:
+            matchLabels:
+              app: rag
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443  # HTTPS out to the Gemini API
