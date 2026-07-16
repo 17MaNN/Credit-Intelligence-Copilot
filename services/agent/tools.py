@@ -1,9 +1,11 @@
 """Tool schemas + executor functions that call the four existing services
 over HTTP. Each tool maps 1:1 to a service endpoint already built in
-Phases 1-4 - no new business logic here, just plumbing."""
+Phases 1-4 - no new business logic here, just plumbing. Backend calls go
+through lib/resilient_client for retry-with-backoff + circuit breaker
+(Phase 11) instead of raw httpx."""
 import os
 import base64
-import httpx
+from lib.resilient_client import resilient_post
 
 SERVICE_API_KEY = os.environ.get("SERVICE_API_KEY", "")
 RISK_MODEL_URL = os.environ.get("RISK_MODEL_URL", "http://risk-model:8000")
@@ -14,7 +16,6 @@ RAG_URL = os.environ.get("RAG_URL", "http://rag:8000")
 HEADERS = {"x-api-key": SERVICE_API_KEY}
 TIMEOUT = 15.0
 
-# Gemini function-declaration format: plain JSON schema per function.
 TOOLS = [
     {
         "name": "get_credit_risk",
@@ -69,8 +70,7 @@ TOOLS = [
 
 
 def _post_json(url, payload):
-    r = httpx.post(url, json=payload, headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = resilient_post(url, json=payload, headers=HEADERS, timeout=TIMEOUT)
     return r.json()
 
 
@@ -93,8 +93,7 @@ def retrieve_policy(query, top_k=3):
 def analyze_document(image_base64):
     raw = base64.b64decode(image_base64)
     files = {"file": ("doc.png", raw, "image/png")}
-    r = httpx.post(f"{DOC_CV_URL}/analyze-document", files=files, headers=HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = resilient_post(f"{DOC_CV_URL}/analyze-document", files=files, headers=HEADERS, timeout=TIMEOUT)
     return r.json()
 
 
