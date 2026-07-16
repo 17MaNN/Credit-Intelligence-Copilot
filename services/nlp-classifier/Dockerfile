@@ -9,7 +9,10 @@ FROM base
 COPY services/nlp-classifier/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY services/nlp-classifier/ .
-RUN python train.py && chown -R appuser:appuser /app
+
+ENV HF_HUB_DOWNLOAD_TIMEOUT=60
+RUN (python train.py || (echo "train.py failed, retrying once..." && sleep 10 && python train.py)) \
+    && chown -R appuser:appuser /app
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD python3 -c "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)" || exit 1
