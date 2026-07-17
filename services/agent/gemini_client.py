@@ -5,6 +5,7 @@ required. Note: this uses `google-genai`, the current supported SDK -
 not the deprecated `google-generativeai` package."""
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
@@ -15,6 +16,7 @@ MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 MAX_TOOL_ROUNDS = 6
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
+MAX_PARALLEL_TOOL_CALLS = 4  # matches the number of distinct tools available
 
 SYSTEM_PROMPT = (
     "You are a lending/collections operations assistant. Use the available "
@@ -44,6 +46,18 @@ def _send_with_retry(chat, content):
     raise last_error
 
 
+def _execute_tool_call(fc):
+    """Runs one tool call, catching exceptions so a single failure doesn't
+    take down the whole batch. Returns (name, input, result)."""
+    name = fc.name
+    tool_input = dict(fc.args)
+    try:
+        result = EXECUTORS[name](**tool_input)
+    except Exception as e:
+        result = {"error": str(e)}
+    return name, tool_input, result
+
+
 def run_agent(user_message: str):
     """Runs the tool-calling loop. Returns (final_text, tool_call_log)."""
     client = _client()
@@ -65,15 +79,16 @@ def run_agent(user_message: str):
             final_text = "".join(p.text for p in parts if p.text)
             return final_text, tool_call_log
 
-        function_response_parts = []
-        for fc in function_calls:
-            name = fc.name
-            tool_input = dict(fc.args)
-            try:
-                result = EXECUTORS[name](**tool_input)
-            except Exception as e:
-                result = {"error": str(e)}
+        # If the model requested multiple independent tool calls in this
+        # same turn, run them concurrently instead of one at a time.
+        # ThreadPoolExecutor.map preserves input order in its results, so
+        # the audit trail still reflects the order the model asked for
+        # them in, even though they may finish in a different order.
+        with ThreadPoolExecutor(max_workers=min(len(function_calls), MAX_PARALLEL_TOOL_CALLS)) as executor:
+            results = list(executor.map(_execute_tool_call, function_calls))
 
+        function_response_parts = []
+        for name, tool_input, result in results:
             tool_call_log.append({"tool": name, "input": tool_input, "result": result})
             function_response_parts.append(
                 types.Part.from_function_response(name=name, response={"result": result})
