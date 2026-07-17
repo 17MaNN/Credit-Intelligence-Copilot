@@ -10,6 +10,7 @@ from lib.schemas import ServiceResponse
 from lib.logging import get_logger
 from lib.rate_limit import RateLimiter, make_rate_limit_dependency
 from gemini_client import run_agent
+from workflow import build_workflow
 
 log = get_logger("agent")
 app = FastAPI(title="agent")
@@ -40,5 +41,6 @@ def handle_inquiry(req: InquiryRequest, _auth=Depends(verify_key), _rl=Depends(r
     log.info(f"handled inquiry, tool_calls={len(tool_call_log)}")
     return ServiceResponse(ok=True, data={
         "response": final_text,
-        "tool_calls": tool_call_log,  # audit trail
+        "workflow": build_workflow(tool_call_log),  # human-readable step-by-step view
+        "tool_calls": tool_call_log,  # raw audit trail (kept for debugging/eval)
     })
