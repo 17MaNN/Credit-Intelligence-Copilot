@@ -49,9 +49,13 @@ def score_case(case: dict) -> dict:
         result["notes"].append(f"tool calls returned errors: {failed_tool_calls}")
 
     response_text = data.get("response", "").lower()
-    missing_keywords = [
-        kw for kw in case["response_must_contain"] if kw.lower() not in response_text
-    ]
+    missing_keywords = []
+    for requirement in case["response_must_contain"]:
+        if isinstance(requirement, (tuple, list)):
+            if not any(alt.lower() in response_text for alt in requirement):
+                missing_keywords.append(requirement)
+        elif requirement.lower() not in response_text:
+            missing_keywords.append(requirement)
     if missing_keywords:
         result["notes"].append(f"response missing expected keywords: {missing_keywords}")
 

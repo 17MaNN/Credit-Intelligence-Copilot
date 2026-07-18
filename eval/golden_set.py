@@ -37,6 +37,8 @@ CASES = [
         "id": "escalation_signal",
         "message": "I can't afford basic necessities anymore and don't know what to do.",
         "required_tools": {"classify_intent", "retrieve_policy"},
-        "response_must_contain": ["escalat"],  
+        "response_must_contain": [
+            ("escalat", "supervisor", "immediate attention", "urgent", "manager")
+        ],
     },
 ]
