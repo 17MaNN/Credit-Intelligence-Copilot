@@ -60,17 +60,27 @@
     padding: 40px 24px;
   }
 
-  .app {
+  .layout {
     width: 100%;
-    max-width: 720px;
+    max-width: 1080px;
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+  }
+
+  .app {
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-width: 0;
   }
 
-  .intro {
-    padding-bottom: 8px;
-  }
+  .intro { padding-bottom: 8px; }
 
   .intro h1 {
     font-family: 'Space Grotesk', sans-serif;
@@ -107,9 +117,18 @@
     color: var(--slate);
     text-transform: uppercase;
     letter-spacing: 0.04em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
 
   .entry.user .entry-label { color: var(--amber); }
+
+  .latency-tag {
+    color: var(--slate);
+    text-transform: none;
+    letter-spacing: normal;
+  }
 
   .entry-body {
     background: #FFFFFF;
@@ -187,6 +206,95 @@
     text-align: right;
   }
 
+  /* Audit trail panel */
+  .panel {
+    position: sticky;
+    top: 24px;
+    border: 1px solid var(--ledger-line);
+    background: #FFFFFF;
+    border-radius: 12px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .panel-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--slate);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .panel-empty {
+    color: var(--slate);
+    font-size: 13px;
+    font-family: 'IBM Plex Mono', monospace;
+  }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .step {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .step-mark {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    flex-shrink: 0;
+    width: 16px;
+  }
+
+  .step.success .step-mark { color: var(--status-green); }
+  .step.error .step-mark { color: var(--status-red); }
+
+  .step-label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .step-detail {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--slate);
+    margin-top: 2px;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--ledger-line);
+    margin: 0;
+  }
+
+  .policy-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .policy-ref {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--slate);
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .policy-ref .id { color: var(--ink); }
+
   @media (prefers-reduced-motion: reduce) {
     button { transition: none; }
   }
@@ -200,20 +308,32 @@
 </header>
 
 <main>
-  <div class="app">
-    <div class="intro">
-      <h1>Describe the customer's situation.</h1>
-      <p>The copilot classifies intent, checks credit risk, and retrieves the
-      relevant policy on its own before recommending an action.</p>
+  <div class="layout">
+    <div class="app">
+      <div class="intro">
+        <h1>Describe the customer's situation.</h1>
+        <p>The copilot classifies intent, checks credit risk, and retrieves the
+        relevant policy on its own before recommending an action.</p>
+      </div>
+
+      <div class="thread" id="thread"></div>
+
+      <form id="form">
+        <textarea id="input" rows="1" placeholder="e.g. Customer lost their job, income $40k, 3 delinquencies, wants a $15,000 loan" maxlength="4000"></textarea>
+        <button type="submit" id="submit">Send</button>
+      </form>
+      <div class="hint" id="charcount">0 / 4000</div>
     </div>
 
-    <div class="thread" id="thread"></div>
-
-    <form id="form">
-      <textarea id="input" rows="1" placeholder="e.g. Customer lost their job, income $40k, 3 delinquencies, wants a $15,000 loan" maxlength="4000"></textarea>
-      <button type="submit" id="submit">Send</button>
-    </form>
-    <div class="hint" id="charcount">0 / 4000</div>
+    <aside class="panel" id="panel">
+      <div class="panel-title">
+        <span>Audit Trail</span>
+        <span id="panel-latency"></span>
+      </div>
+      <div id="panel-body">
+        <div class="panel-empty">Send a message to see which tools the copilot uses and why.</div>
+      </div>
+    </aside>
   </div>
 </main>
 
@@ -229,6 +349,8 @@
   const input = document.getElementById('input');
   const submitBtn = document.getElementById('submit');
   const charcount = document.getElementById('charcount');
+  const panelBody = document.getElementById('panel-body');
+  const panelLatency = document.getElementById('panel-latency');
 
   input.addEventListener('input', () => {
     charcount.textContent = `${input.value.length} / 4000`;
@@ -236,14 +358,51 @@
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   });
 
-  function addEntry(label, text, kind) {
+  function addEntry(label, text, kind, meta) {
     const entry = document.createElement('div');
     entry.className = `entry ${kind}`;
-    entry.innerHTML = `<div class="entry-label">${label}</div><div class="entry-body"></div>`;
+    const labelHtml = meta ? `${label}<span class="latency-tag">${meta}</span>` : label;
+    entry.innerHTML = `<div class="entry-label">${labelHtml}</div><div class="entry-body"></div>`;
     entry.querySelector('.entry-body').textContent = text;
     thread.appendChild(entry);
     entry.scrollIntoView({ behavior: 'smooth', block: 'end' });
     return entry;
+  }
+
+  function renderPanel(workflow, toolCalls, latencyMs) {
+    panelLatency.textContent = `${(latencyMs / 1000).toFixed(1)}s`;
+
+    const stepsHtml = (workflow || []).map(step => {
+      const mark = step.status === 'success' ? '✓' : '✗';
+      const detail = step.detail ? `<div class="step-detail">${escapeHtml(step.detail)}</div>` : '';
+      return `<div class="step ${step.status}">
+        <span class="step-mark">${mark}</span>
+        <div>
+          <div class="step-label">${escapeHtml(step.step)}</div>
+          ${detail}
+        </div>
+      </div>`;
+    }).join('');
+
+    // Pull policy references directly from the retrieve_policy tool call,
+    // if the agent made one - same underlying data as the audit trail
+    // step above, just surfaced with more detail (id + relevance score).
+    const policyCall = (toolCalls || []).find(c => c.tool === 'retrieve_policy');
+    const policies = policyCall?.result?.data?.results || [];
+    const policiesHtml = policies.length
+      ? `<hr class="divider"><div class="panel-title">Policies Referenced</div>
+         <div class="policy-list">${policies.map(p => `
+           <div class="policy-ref"><span class="id">${escapeHtml(p.id)}</span><span>score ${Number(p.score).toFixed(2)}</span></div>
+         `).join('')}</div>`
+      : '';
+
+    panelBody.innerHTML = `<div class="steps">${stepsHtml}</div>${policiesHtml}`;
+  }
+
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
   }
 
   form.addEventListener('submit', async (e) => {
@@ -258,6 +417,7 @@
     submitBtn.disabled = true;
 
     const pending = addEntry('Copilot', 'Working through the request…', 'pending');
+    const startTime = performance.now();
 
     try {
       const res = await fetch(API_URL, {
@@ -266,10 +426,12 @@
         body: JSON.stringify({ message }),
       });
       const body = await res.json();
+      const latencyMs = performance.now() - startTime;
 
       pending.remove();
       if (body.ok) {
-        addEntry('Copilot', body.data.response, 'assistant');
+        addEntry('Copilot', body.data.response, 'assistant', `${(latencyMs / 1000).toFixed(1)}s`);
+        renderPanel(body.data.workflow, body.data.tool_calls, latencyMs);
       } else {
         addEntry('Copilot', body.error || 'Something went wrong.', 'error');
       }
