@@ -206,6 +206,42 @@
     text-align: right;
   }
 
+  .attach-btn {
+    background: transparent;
+    color: var(--slate);
+    font-size: 16px;
+    padding: 0 10px;
+    border-radius: 8px;
+  }
+
+  .attach-btn:hover { background: var(--paper); opacity: 1; }
+
+  .chip-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: #FFFFFF;
+    border: 1px solid var(--ledger-line);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink);
+  }
+
+  .chip button {
+    background: transparent;
+    color: var(--slate);
+    padding: 0 2px;
+    font-size: 14px;
+    border-radius: 4px;
+  }
+
   /* Audit trail panel */
   .panel {
     position: sticky;
@@ -319,9 +355,12 @@
       <div class="thread" id="thread"></div>
 
       <form id="form">
+        <input type="file" id="fileInput" accept="image/*" hidden>
+        <button type="button" id="attachBtn" class="attach-btn" title="Attach a document">📎</button>
         <textarea id="input" rows="1" placeholder="e.g. Customer lost their job, income $40k, 3 delinquencies, wants a $15,000 loan" maxlength="4000"></textarea>
         <button type="submit" id="submit">Send</button>
       </form>
+      <div class="chip-row" id="chipRow"></div>
       <div class="hint" id="charcount">0 / 4000</div>
     </div>
 
@@ -351,6 +390,54 @@
   const charcount = document.getElementById('charcount');
   const panelBody = document.getElementById('panel-body');
   const panelLatency = document.getElementById('panel-latency');
+  const fileInput = document.getElementById('fileInput');
+  const attachBtn = document.getElementById('attachBtn');
+  const chipRow = document.getElementById('chipRow');
+
+  const MAX_FILE_BYTES = 8 * 1024 * 1024; // matches doc-cv's own upload cap
+  let attachedFile = null; // { name, base64 }
+
+  attachBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    if (file.size > MAX_FILE_BYTES) {
+      alert('That file is too large (max 8MB).');
+      fileInput.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      // reader.result is a data: URL like "data:image/png;base64,AAAA..."
+      // - only the part after the comma is the actual base64 payload the
+      // backend expects.
+      const base64 = reader.result.split(',')[1];
+      attachedFile = { name: file.name, base64 };
+      renderChip();
+    };
+    reader.readAsDataURL(file);
+  });
+
+  function renderChip() {
+    chipRow.innerHTML = '';
+    if (!attachedFile) return;
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.innerHTML = `<span>${escapeHtml(attachedFile.name)}</span>`;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => {
+      attachedFile = null;
+      fileInput.value = '';
+      renderChip();
+    });
+    chip.appendChild(removeBtn);
+    chipRow.appendChild(chip);
+  }
 
   input.addEventListener('input', () => {
     charcount.textContent = `${input.value.length} / 4000`;
@@ -410,10 +497,16 @@
     const message = input.value.trim();
     if (!message) return;
 
-    addEntry('Customer', message, 'user');
+    const fileNote = attachedFile ? ` 📎 ${attachedFile.name}` : '';
+    addEntry('Customer', message + fileNote, 'user');
+
+    const imageToSend = attachedFile ? attachedFile.base64 : null;
     input.value = '';
     input.style.height = 'auto';
     charcount.textContent = '0 / 4000';
+    attachedFile = null;
+    fileInput.value = '';
+    renderChip();
     submitBtn.disabled = true;
 
     const pending = addEntry('Copilot', 'Working through the request…', 'pending');
@@ -423,7 +516,7 @@
       const res = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, image_base64: imageToSend }),
       });
       const body = await res.json();
       const latencyMs = performance.now() - startTime;

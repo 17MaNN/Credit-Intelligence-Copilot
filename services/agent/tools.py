@@ -58,13 +58,13 @@ TOOLS = [
     },
     {
         "name": "analyze_document",
-        "description": "Classify a document type and OCR its text from a "
-                        "base64-encoded image.",
-        "parameters": {
-            "type": "object",
-            "properties": {"image_base64": {"type": "string"}},
-            "required": ["image_base64"],
-        },
+        "description": "Classify the type of a document the customer has "
+                        "attached to this conversation and OCR its text. "
+                        "Only callable when a document was actually "
+                        "attached to the current message - has no effect "
+                        "otherwise. Takes no arguments; the attached "
+                        "document is supplied automatically.",
+        "parameters": {"type": "object", "properties": {}},
     },
 ]
 

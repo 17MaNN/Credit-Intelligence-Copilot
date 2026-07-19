@@ -45,6 +45,11 @@ rate_limit = make_rate_limit_dependency(inquiry_limiter)
 
 class InquiryRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    # Optional base64-encoded image attachment. doc-cv enforces an 8MB raw
+    # upload limit; base64 encoding inflates size by ~33%, so this cap
+    # gives an early, cheap rejection before the payload travels any
+    # further through the pipeline.
+    image_base64: str | None = Field(default=None, max_length=11_000_000)
 
 
 @app.get("/health")
@@ -52,11 +57,11 @@ def health():
     return {"ok": True}
 
 
-def _process_inquiry(message: str) -> ServiceResponse:
+def _process_inquiry(message: str, image_base64: str | None = None) -> ServiceResponse:
     """Shared core logic for both endpoints below - only the auth
     requirement differs between them."""
     try:
-        final_text, tool_call_log = run_agent(message)
+        final_text, tool_call_log = run_agent(message, image_base64=image_base64)
     except Exception as e:
         log.info(f"agent failed: {e}")
         return ServiceResponse(ok=False, error=f"agent temporarily unavailable: {e}")
@@ -71,13 +76,12 @@ def _process_inquiry(message: str) -> ServiceResponse:
 
 @app.post("/handle-inquiry", response_model=ServiceResponse)
 def handle_inquiry(req: InquiryRequest, _auth=Depends(verify_key), _rl=Depends(rate_limit)):
-    return _process_inquiry(req.message)
+    return _process_inquiry(req.message, req.image_base64)
 
 
 @app.post("/ui/handle-inquiry", response_model=ServiceResponse)
 def ui_handle_inquiry(req: InquiryRequest, _rl=Depends(rate_limit)):
-    return _process_inquiry(req.message)
-
+    return _process_inquiry(req.message, req.image_base64)
 
 # Mounted last so it doesn't shadow the API routes above. Serves the web UI
 # at the root path.

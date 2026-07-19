@@ -23,7 +23,9 @@ SYSTEM_PROMPT = (
     "tools to gather facts (risk score, customer intent, relevant policy) "
     "before making a recommendation. Always cite which policy applies when "
     "you recommend an action. Keep the final answer concise and structured: "
-    "state the recommended action, the reasoning, and any policy reference."
+    "state the recommended action, the reasoning, and any policy reference. "
+    "If the customer's message indicates a document was attached, call "
+    "analyze_document to read it before responding - it takes no arguments."
 )
 
 
@@ -46,20 +48,45 @@ def _send_with_retry(chat, content):
     raise last_error
 
 
-def _execute_tool_call(fc):
+def _build_executors(image_base64):
+    """Returns a fresh executor mapping for this single run_agent() call.
+    analyze_document is bound to THIS call's uploaded image via closure -
+    never shared/global state - so concurrent requests (Phase 13's
+    same-turn parallel tool calls, or simply two different users hitting
+    the service at once) can never see each other's uploaded image."""
+    executors = dict(EXECUTORS)
+
+    if image_base64:
+        executors["analyze_document"] = lambda: EXECUTORS["analyze_document"](image_base64)
+    else:
+        executors["analyze_document"] = lambda: {"error": "no document was attached to this message"}
+
+    return executors
+
+
+def _execute_tool_call(fc, executors):
     """Runs one tool call, catching exceptions so a single failure doesn't
     take down the whole batch. Returns (name, input, result)."""
     name = fc.name
     tool_input = dict(fc.args)
     try:
-        result = EXECUTORS[name](**tool_input)
+        result = executors[name](**tool_input)
     except Exception as e:
         result = {"error": str(e)}
     return name, tool_input, result
 
 
-def run_agent(user_message: str):
-    """Runs the tool-calling loop. Returns (final_text, tool_call_log)."""
+def run_agent(user_message: str, image_base64: str = None):
+    """Runs the tool-calling loop. Returns (final_text, tool_call_log).
+    image_base64, if provided, is made available to the analyze_document
+    tool for this call only - see _build_executors."""
+    executors = _build_executors(image_base64)
+
+    if image_base64:
+        user_message = (
+            "[A document has been attached to this message.]\n\n" + user_message
+        )
+
     client = _client()
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
@@ -84,8 +111,8 @@ def run_agent(user_message: str):
         # ThreadPoolExecutor.map preserves input order in its results, so
         # the audit trail still reflects the order the model asked for
         # them in, even though they may finish in a different order.
-        with ThreadPoolExecutor(max_workers=min(len(function_calls), MAX_PARALLEL_TOOL_CALLS)) as executor:
-            results = list(executor.map(_execute_tool_call, function_calls))
+        with ThreadPoolExecutor(max_workers=min(len(function_calls), MAX_PARALLEL_TOOL_CALLS)) as tp:
+            results = list(tp.map(lambda fc: _execute_tool_call(fc, executors), function_calls))
 
         function_response_parts = []
         for name, tool_input, result in results:
