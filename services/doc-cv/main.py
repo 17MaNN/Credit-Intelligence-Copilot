@@ -7,7 +7,7 @@ import pytesseract
 from PIL import Image
 from fastapi import FastAPI, Depends, UploadFile, File
 import torch.nn.functional as F
-
+from lib.request_id import add_request_id_middleware
 from lib.auth import verify_key
 from lib.schemas import ServiceResponse
 from lib.logging import get_logger
@@ -16,6 +16,7 @@ from data import CLASSES, IMG_SIZE
 
 log = get_logger("doc-cv")
 app = FastAPI(title="doc-cv")
+add_request_id_middleware(app)
 
 model = DocNet()
 model.load_state_dict(torch.load("doc_model.pt", map_location="cpu", weights_only=True))

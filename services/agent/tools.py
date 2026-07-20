@@ -1,11 +1,7 @@
-"""Tool schemas + executor functions that call the four existing services
-over HTTP. Each tool maps 1:1 to a service endpoint already built in
-Phases 1-4 - no new business logic here, just plumbing. Backend calls go
-through lib/resilient_client for retry-with-backoff + circuit breaker
-(Phase 11) instead of raw httpx."""
 import os
 import base64
 from lib.resilient_client import resilient_post
+from lib.request_id import get_request_id, REQUEST_ID_HEADER
 
 SERVICE_API_KEY = os.environ.get("SERVICE_API_KEY", "")
 RISK_MODEL_URL = os.environ.get("RISK_MODEL_URL", "http://risk-model:8000")
@@ -13,8 +9,15 @@ DOC_CV_URL = os.environ.get("DOC_CV_URL", "http://doc-cv:8000")
 NLP_URL = os.environ.get("NLP_URL", "http://nlp-classifier:8000")
 RAG_URL = os.environ.get("RAG_URL", "http://rag:8000")
 
-HEADERS = {"x-api-key": SERVICE_API_KEY}
 TIMEOUT = 15.0
+
+
+def _headers():
+    """Built per-call (not a module-level constant) so it always carries
+    the CURRENT request's ID - important since Phase 13 runs multiple
+    tool calls concurrently across threads, each potentially belonging to
+    a different inbound request."""
+    return {"x-api-key": SERVICE_API_KEY, REQUEST_ID_HEADER: get_request_id()}
 
 TOOLS = [
     {
@@ -70,7 +73,7 @@ TOOLS = [
 
 
 def _post_json(url, payload):
-    r = resilient_post(url, json=payload, headers=HEADERS, timeout=TIMEOUT)
+    r = resilient_post(url, json=payload, headers=_headers(), timeout=TIMEOUT)
     return r.json()
 
 
@@ -93,7 +96,7 @@ def retrieve_policy(query, top_k=3):
 def analyze_document(image_base64):
     raw = base64.b64decode(image_base64)
     files = {"file": ("doc.png", raw, "image/png")}
-    r = resilient_post(f"{DOC_CV_URL}/analyze-document", files=files, headers=HEADERS, timeout=TIMEOUT)
+    r = resilient_post(f"{DOC_CV_URL}/analyze-document", files=files, headers=_headers(), timeout=TIMEOUT)
     return r.json()
 
 

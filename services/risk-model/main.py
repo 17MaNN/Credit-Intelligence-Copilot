@@ -4,7 +4,7 @@ import json
 import torch
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel, Field
-
+from lib.request_id import add_request_id_middleware
 from lib.auth import verify_key
 from lib.schemas import ServiceResponse
 from lib.logging import get_logger
@@ -12,6 +12,7 @@ from model import RiskNet
 
 log = get_logger("risk-model")
 app = FastAPI(title="risk-model")
+add_request_id_middleware(app)
 
 model = RiskNet()
 model.load_state_dict(torch.load("risk_model.pt", map_location="cpu", weights_only=True))

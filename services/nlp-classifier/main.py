@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel, Field
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
+from lib.request_id import add_request_id_middleware
 from lib.auth import verify_key
 from lib.schemas import ServiceResponse
 from lib.logging import get_logger
@@ -13,6 +13,7 @@ from data import LABELS
 
 log = get_logger("nlp-classifier")
 app = FastAPI(title="nlp-classifier")
+add_request_id_middleware(app)
 
 MODEL_DIR = "nlp_model"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)

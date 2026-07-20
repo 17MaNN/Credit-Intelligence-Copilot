@@ -7,13 +7,14 @@ import faiss
 from sentence_transformers import SentenceTransformer
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel, Field
-
+from lib.request_id import add_request_id_middleware
 from lib.auth import verify_key
 from lib.schemas import ServiceResponse
 from lib.logging import get_logger
 
 log = get_logger("rag")
 app = FastAPI(title="rag")
+add_request_id_middleware(app)
 
 MODEL_NAME = "all-MiniLM-L6-v2"
 model = SentenceTransformer(MODEL_NAME)

@@ -10,6 +10,7 @@ from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
 from tools import TOOLS, EXECUTORS
+from lib.request_id import get_request_id, use_request_id
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -64,16 +65,20 @@ def _build_executors(image_base64):
     return executors
 
 
-def _execute_tool_call(fc, executors):
+def _execute_tool_call(fc, executors, request_id):
     """Runs one tool call, catching exceptions so a single failure doesn't
-    take down the whole batch. Returns (name, input, result)."""
-    name = fc.name
-    tool_input = dict(fc.args)
-    try:
-        result = executors[name](**tool_input)
-    except Exception as e:
-        result = {"error": str(e)}
-    return name, tool_input, result
+    take down the whole batch. Returns (name, input, result). Sets the
+    request ID in THIS worker thread's own context - see
+    lib/request_id.use_request_id for why this is safe under concurrency
+    where contextvars.copy_context().run() is not."""
+    with use_request_id(request_id):
+        name = fc.name
+        tool_input = dict(fc.args)
+        try:
+            result = executors[name](**tool_input)
+        except Exception as e:
+            result = {"error": str(e)}
+        return name, tool_input, result
 
 
 def run_agent(user_message: str, image_base64: str = None):
@@ -111,8 +116,12 @@ def run_agent(user_message: str, image_base64: str = None):
         # ThreadPoolExecutor.map preserves input order in its results, so
         # the audit trail still reflects the order the model asked for
         # them in, even though they may finish in a different order.
+        current_request_id = get_request_id()
         with ThreadPoolExecutor(max_workers=min(len(function_calls), MAX_PARALLEL_TOOL_CALLS)) as tp:
-            results = list(tp.map(lambda fc: _execute_tool_call(fc, executors), function_calls))
+            results = list(tp.map(
+                lambda fc: _execute_tool_call(fc, executors, current_request_id),
+                function_calls,
+            ))
 
         function_response_parts = []
         for name, tool_input, result in results:
