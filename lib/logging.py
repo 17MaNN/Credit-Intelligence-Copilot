@@ -4,9 +4,6 @@ from lib.request_id import get_request_id
 
 
 class _RequestIdFilter(logging.Filter):
-    """Injects the current request's ID into every log record. Reads from
-    the contextvar set by lib/request_id.py's middleware, so existing
-    log.info(...) calls need no changes to pick this up."""
     def filter(self, record):
         record.request_id = get_request_id()
         return True

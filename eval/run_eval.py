@@ -1,7 +1,6 @@
 """Runs the golden set against a live agent service and scores results.
 Exits non-zero if the pass rate is below PASS_THRESHOLD, so this can gate
-a CI deploy step. Run with: python run_eval.py
-Requires the full stack (all 5 services) running and reachable."""
+a CI deploy step. """
 import os
 import sys
 import httpx

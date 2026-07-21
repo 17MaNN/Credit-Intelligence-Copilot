@@ -1,5 +1,5 @@
 """Credit risk scoring service. Single endpoint: POST /predict.
-Auth, response shape, and logging all come from lib/ - not redefined here."""
+Auth, response shape, and logging all come from lib/ """
 import json
 import torch
 from fastapi import FastAPI, Depends

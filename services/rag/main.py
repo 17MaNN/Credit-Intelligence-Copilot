@@ -1,6 +1,6 @@
 """RAG retrieval service. Single endpoint: POST /retrieve.
 Pure retrieval - no LLM here, kept separate so it scales independently of the
-agent orchestrator (Phase 5). Auth/schema/logging reused from lib/."""
+agent orchestrator. Auth, response shape, and logging all come from lib/ """
 import json
 import numpy as np
 import faiss

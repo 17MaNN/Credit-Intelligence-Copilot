@@ -1,5 +1,5 @@
-"""Single source of truth for service-to-service auth.
-Key is injected via K8s Secret env var, never hardcoded."""
+"""for service-to-service auth.
+Key is injected via K8s Secret env var."""
 import os
 from fastapi import Header, HTTPException
 

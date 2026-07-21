@@ -3,9 +3,6 @@ format via a /metrics endpoint. No Prometheus/Grafana server is deployed
 anywhere in this project - this just makes the service scrape-compatible
 if one is ever added, without taking on that infrastructure now.
 
-State resets on restart and is per-pod (same limitation as
-lib/rate_limit.py) - acceptable for this project's scope; a real
-multi-replica production deployment would centralize this instead.
 """
 import threading
 from collections import defaultdict

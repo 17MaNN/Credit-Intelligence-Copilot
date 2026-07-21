@@ -1,6 +1,6 @@
 """Embed policy docs and build a FAISS index. Run once at build time: python build_index.py
 Requires internet access to download the embedding model from Hugging Face Hub -
-this happens during `docker build`, not at runtime (same pattern as nlp-classifier)."""
+this happens during `docker build`, not at runtime."""
 import json
 import numpy as np
 import faiss
