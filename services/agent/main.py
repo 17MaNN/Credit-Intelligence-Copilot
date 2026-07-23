@@ -18,9 +18,11 @@ system. /metrics exposes basic counters in Prometheus text format - no
 Prometheus/Grafana server is actually deployed, this just makes the
 service scrape-compatible if one is ever added."""
 import os
+import json
 import time
 from fastapi import FastAPI, Depends, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -28,9 +30,9 @@ from lib.auth import verify_key
 from lib.schemas import ServiceResponse
 from lib.logging import get_logger
 from lib.rate_limit import RateLimiter, make_rate_limit_dependency
-from lib.request_id import add_request_id_middleware
+from lib.request_id import add_request_id_middleware, get_request_id
 from lib import metrics
-from gemini_client import run_agent
+from gemini_client import run_agent, run_agent_stream
 from workflow import build_workflow
 
 log = get_logger("agent")
@@ -104,6 +106,35 @@ def handle_inquiry(req: InquiryRequest, _auth=Depends(verify_key), _rl=Depends(r
 @app.post("/ui/handle-inquiry", response_model=ServiceResponse)
 def ui_handle_inquiry(req: InquiryRequest, _rl=Depends(rate_limit)):
     return _process_inquiry(req.message, req.image_base64)
+
+
+@app.post("/ui/handle-inquiry/stream")
+def ui_handle_inquiry_stream(req: InquiryRequest, _rl=Depends(rate_limit)):
+    """Server-Sent Events variant of /ui/handle-inquiry, for the browser UI
+    only - /handle-inquiry (used by the eval harness, CI) is untouched."""
+    def event_generator():
+        start = time.monotonic()
+        metrics.inc("agent_requests_total", {"mode": "stream"})
+        try:
+            for event in run_agent_stream(req.message, image_base64=req.image_base64):
+                yield f"data: {json.dumps(event)}\n\n"
+                if event["type"] == "tool_end":
+                    metrics.inc("tool_calls_total", {"tool": event["tool"], "status": event["status"]})
+                if event["type"] == "done":
+                    metrics.inc("agent_requests_total", {"status": "success", "mode": "stream"})
+                    metrics.observe_latency(
+                        "agent_request_latency_ms", (time.monotonic() - start) * 1000, {"mode": "stream"}
+                    )
+                    log.info(f"handled inquiry (stream), tool_calls={len(event['tool_calls'])}")
+        except Exception as e:
+            log.info(f"agent stream failed: {e}")
+            metrics.inc("agent_requests_total", {"status": "error", "mode": "stream"})
+            metrics.observe_latency(
+                "agent_request_latency_ms", (time.monotonic() - start) * 1000, {"mode": "stream"}
+            )
+            yield f"data: {json.dumps({'type': 'error', 'error': f'agent temporarily unavailable: {e}'})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

@@ -295,6 +295,7 @@
 
   .step.success .step-mark { color: var(--status-green); }
   .step.error .step-mark { color: var(--status-red); }
+  .step.pending-step .step-mark { color: var(--amber); }
 
   .step-label {
     font-size: 13px;
@@ -377,11 +378,7 @@
 </main>
 
 <script>
-  // Calls /ui/handle-inquiry, a separate endpoint from the key-protected
-  // /handle-inquiry used by the eval harness and CI. The browser can't
-  // hold a real secret, so this endpoint is public and relies on
-  // server-side rate limiting instead of a client-exposed key.
-  const API_URL = "/ui/handle-inquiry";
+  const STREAM_URL = "/ui/handle-inquiry/stream";
 
   const thread = document.getElementById('thread');
   const form = document.getElementById('form');
@@ -394,8 +391,8 @@
   const attachBtn = document.getElementById('attachBtn');
   const chipRow = document.getElementById('chipRow');
 
-  const MAX_FILE_BYTES = 8 * 1024 * 1024; // matches doc-cv's own upload cap
-  let attachedFile = null; // { name, base64 }
+  const MAX_FILE_BYTES = 8 * 1024 * 1024;
+  let attachedFile = null;
 
   attachBtn.addEventListener('click', () => fileInput.click());
 
@@ -411,9 +408,6 @@
 
     const reader = new FileReader();
     reader.onload = () => {
-      // reader.result is a data: URL like "data:image/png;base64,AAAA..."
-      // - only the part after the comma is the actual base64 payload the
-      // backend expects.
       const base64 = reader.result.split(',')[1];
       attachedFile = { name: file.name, base64 };
       renderChip();
@@ -456,40 +450,56 @@
     return entry;
   }
 
-  function renderPanel(workflow, toolCalls, latencyMs) {
-    panelLatency.textContent = `${(latencyMs / 1000).toFixed(1)}s`;
+  function renderStepPending(tool, label) {
+    const el = document.createElement('div');
+    el.className = 'step pending-step';
+    el.innerHTML = `<span class="step-mark">…</span><div><div class="step-label">${escapeHtml(label)}</div></div>`;
+    panelBody.appendChild(el);
+    return el;
+  }
 
-    const stepsHtml = (workflow || []).map(step => {
-      const mark = step.status === 'success' ? '✓' : '✗';
-      const detail = step.detail ? `<div class="step-detail">${escapeHtml(step.detail)}</div>` : '';
-      return `<div class="step ${step.status}">
-        <span class="step-mark">${mark}</span>
-        <div>
-          <div class="step-label">${escapeHtml(step.step)}</div>
-          ${detail}
-        </div>
-      </div>`;
-    }).join('');
+  function renderStepDone(el, label, status, detail) {
+    if (!el) return;
+    el.className = `step ${status}`;
+    const mark = status === 'success' ? '✓' : '✗';
+    const detailHtml = detail ? `<div class="step-detail">${escapeHtml(detail)}</div>` : '';
+    el.innerHTML = `<span class="step-mark">${mark}</span><div><div class="step-label">${escapeHtml(label)}</div>${detailHtml}</div>`;
+  }
 
-    // Pull policy references directly from the retrieve_policy tool call,
-    // if the agent made one - same underlying data as the audit trail
-    // step above, just surfaced with more detail (id + relevance score).
+  function renderPolicyReferences(toolCalls) {
     const policyCall = (toolCalls || []).find(c => c.tool === 'retrieve_policy');
     const policies = policyCall?.result?.data?.results || [];
-    const policiesHtml = policies.length
-      ? `<hr class="divider"><div class="panel-title">Policies Referenced</div>
-         <div class="policy-list">${policies.map(p => `
-           <div class="policy-ref"><span class="id">${escapeHtml(p.id)}</span><span>score ${Number(p.score).toFixed(2)}</span></div>
-         `).join('')}</div>`
-      : '';
-
-    panelBody.innerHTML = `<div class="steps">${stepsHtml}</div>${policiesHtml}`;
+    if (!policies.length) return;
+    const div = document.createElement('div');
+    div.innerHTML = `<hr class="divider"><div class="panel-title">Policies Referenced</div>
+       <div class="policy-list">${policies.map(p => `
+         <div class="policy-ref"><span class="id">${escapeHtml(p.id)}</span><span>score ${Number(p.score).toFixed(2)}</span></div>
+       `).join('')}</div>`;
+    panelBody.appendChild(div);
   }
 
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+  }
+
+  async function streamSSE(response, onEvent) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split('\n\n');
+      buffer = parts.pop();
+      for (const part of parts) {
+        if (part.startsWith('data: ')) {
+          onEvent(JSON.parse(part.slice(6)));
+        }
+      }
+    }
   }
 
   form.addEventListener('submit', async (e) => {
@@ -509,28 +519,52 @@
     renderChip();
     submitBtn.disabled = true;
 
-    const pending = addEntry('Copilot', 'Working through the request…', 'pending');
+    const assistantEntry = addEntry('Copilot', '', 'assistant');
+    const bodyEl = assistantEntry.querySelector('.entry-body');
+    let accumulatedText = '';
     const startTime = performance.now();
 
+    panelBody.innerHTML = '';
+    panelLatency.textContent = '';
+    const stepElements = new Map();
+
     try {
-      const res = await fetch(API_URL, {
+      const res = await fetch(STREAM_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, image_base64: imageToSend }),
       });
-      const body = await res.json();
-      const latencyMs = performance.now() - startTime;
+      if (!res.ok || !res.body) throw new Error('stream request failed');
 
-      pending.remove();
-      if (body.ok) {
-        addEntry('Copilot', body.data.response, 'assistant', `${(latencyMs / 1000).toFixed(1)}s`);
-        renderPanel(body.data.workflow, body.data.tool_calls, latencyMs);
-      } else {
-        addEntry('Copilot', body.error || 'Something went wrong.', 'error');
+      await streamSSE(res, (event) => {
+        if (event.type === 'tool_start') {
+          stepElements.set(event.tool, renderStepPending(event.tool, event.label));
+        } else if (event.type === 'tool_end') {
+          renderStepDone(stepElements.get(event.tool), event.label, event.status, event.detail);
+        } else if (event.type === 'text_delta') {
+          accumulatedText += event.text;
+          bodyEl.textContent = accumulatedText;
+          assistantEntry.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        } else if (event.type === 'done') {
+          const latencyMs = performance.now() - startTime;
+          panelLatency.textContent = `${(latencyMs / 1000).toFixed(1)}s`;
+          renderPolicyReferences(event.tool_calls);
+          const meta = document.createElement('span');
+          meta.className = 'latency-tag';
+          meta.textContent = `${(latencyMs / 1000).toFixed(1)}s`;
+          assistantEntry.querySelector('.entry-label').appendChild(meta);
+        } else if (event.type === 'error') {
+          bodyEl.textContent = event.error || 'Something went wrong.';
+          assistantEntry.className = 'entry error';
+        }
+      });
+
+      if (panelBody.children.length === 0) {
+        panelBody.innerHTML = '<div class="panel-empty">No tools were needed for this response.</div>';
       }
     } catch (err) {
-      pending.remove();
-      addEntry('Copilot', 'Could not reach the service. Check your connection and try again.', 'error');
+      bodyEl.textContent = 'Could not reach the service. Check your connection and try again.';
+      assistantEntry.className = 'entry error';
     } finally {
       submitBtn.disabled = false;
     }
